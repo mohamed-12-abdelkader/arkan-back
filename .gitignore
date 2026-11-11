@@ -1,0 +1,15 @@
+# dependencies
+/node_modules
+
+# environment variables
+.env
+
+# typescript build folder
+/dist
+
+# uploaded files (keep folder)
+/uploads/**
+!/uploads/.gitkeep
+!/uploads/products/.gitkeep
+!/uploads/brands/.gitkeep
+!/uploads/categories/.gitkeep
