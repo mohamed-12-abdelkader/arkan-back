@@ -104,7 +104,7 @@ export async function listOpenOrdersForPhone(phoneDigits: string) {
   const rows = await pool.query(
     `SELECT id, order_number, total, status, phone
      FROM orders
-     WHERE status = ANY($1::text[])
+     WHERE status::text = ANY($1::text[])
      ORDER BY created_at DESC
      LIMIT 50`,
     [['pending', 'awaiting_confirmation']],
