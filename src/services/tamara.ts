@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import pool from '../db/pool';
 import { config, HttpError, logger } from '../utils';
+import { maybeNotifyOrderWhatsApp } from './whatsapp';
 
 type Billing = {
   full_name?: string;
@@ -22,6 +23,7 @@ type OrderRow = {
   guest_email?: string | null;
   shipping_address?: string | null;
   shipping_address_json?: Record<string, unknown> | null;
+  user_id?: number | null;
 };
 
 function money(value: string | number | null | undefined) {
@@ -53,6 +55,51 @@ export function normalizeTamaraPhone(raw: string) {
   if (digits.startsWith('00')) digits = digits.replace(/^00/, '');
   if (digits.startsWith('0') && digits.length >= 9) digits = digits.slice(1);
   return digits;
+}
+
+/** VAT portion of a VAT-inclusive amount, using TAMARA_VAT_RATE (0 = not VAT-registered). */
+export function vatPortion(total: number, rate = config.TAMARA_VAT_RATE) {
+  if (!rate || rate <= 0) return 0;
+  return Math.round((total - total / (1 + rate)) * 100) / 100;
+}
+
+/** Whether an order total is inside the configured Tamara range (0 = unbounded). */
+export function tamaraAmountAllowed(
+  amount: number,
+  min = config.TAMARA_MIN_AMOUNT,
+  max = config.TAMARA_MAX_AMOUNT,
+) {
+  if (!Number.isFinite(amount) || amount <= 0) return false;
+  if (min > 0 && amount < min) return false;
+  if (max > 0 && amount > max) return false;
+  return true;
+}
+
+async function riskAssessment(order: OrderRow, phone: string) {
+  const today = ddMmYyyy();
+  const history = await pool.query(
+    `SELECT COUNT(*)::int AS total_orders,
+            MIN(created_at) FILTER (WHERE payment_status = 'paid') AS first_paid,
+            MAX(created_at) FILTER (WHERE payment_status = 'paid') AS last_paid
+     FROM orders
+     WHERE id <> $1 AND (($2::int IS NOT NULL AND user_id = $2) OR phone = $3)`,
+    [order.id, order.user_id ?? null, order.phone ?? phone],
+  );
+  const h = history.rows[0] || {};
+  let accountCreated = today;
+  if (order.user_id) {
+    const user = await pool.query('SELECT created_at FROM users WHERE id = $1', [order.user_id]);
+    if (user.rows[0]?.created_at) accountCreated = ddMmYyyy(new Date(user.rows[0].created_at));
+  }
+  const risk: Record<string, unknown> = {
+    is_premium_customer: false,
+    is_guest_user: !order.user_id,
+    account_creation_date: accountCreated,
+    total_order_count: Number(h.total_orders) || 0,
+  };
+  if (h.first_paid) risk.date_first_paid = ddMmYyyy(new Date(h.first_paid));
+  if (h.last_paid) risk.date_last_paid = ddMmYyyy(new Date(h.last_paid));
+  return risk;
 }
 
 function ddMmYyyy(date = new Date()) {
@@ -128,15 +175,10 @@ export async function createTamaraCheckout(opts: {
   );
   if (!phone) throw new HttpError(400, 'رقم الجوال مطلوب للدفع عبر تمارا');
 
-  const email =
-    opts.billing.email ||
-    opts.order.guest_email ||
-    `guest-${opts.order.id}@arkan.shop`;
+  const email = opts.billing.email || opts.order.guest_email || `guest-${opts.order.id}@arkan.shop`;
 
   const city =
-    opts.billing.city ||
-    String(opts.order.shipping_address_json?.city || '') ||
-    'Riyadh';
+    opts.billing.city || String(opts.order.shipping_address_json?.city || '') || 'Riyadh';
   const line1 =
     opts.billing.address_line1 ||
     opts.order.shipping_address ||
@@ -183,15 +225,9 @@ export async function createTamaraCheckout(opts: {
 
   const frontend = opts.frontendReturn.replace(/\/$/, '');
   const api = opts.apiPublicBase.replace(/\/$/, '');
-  const successBase =
-    config.TAMARA_SUCCESS_URL ||
-    `${api}/api/v1/payments/tamara/return/success`;
-  const failureBase =
-    config.TAMARA_FAILURE_URL ||
-    `${api}/api/v1/payments/tamara/return/failure`;
-  const cancelBase =
-    config.TAMARA_CANCEL_URL ||
-    `${api}/api/v1/payments/tamara/return/cancel`;
+  const successBase = config.TAMARA_SUCCESS_URL || `${api}/api/v1/payments/tamara/return/success`;
+  const failureBase = config.TAMARA_FAILURE_URL || `${api}/api/v1/payments/tamara/return/failure`;
+  const cancelBase = config.TAMARA_CANCEL_URL || `${api}/api/v1/payments/tamara/return/cancel`;
 
   const withOrder = (base: string) => {
     const url = new URL(base);
@@ -199,7 +235,6 @@ export async function createTamaraCheckout(opts: {
     return url.toString();
   };
 
-  const today = ddMmYyyy();
   const instalments = Number(config.TAMARA_INSTALMENTS) || 3;
   const paymentType = config.TAMARA_PAYMENT_TYPE || 'PAY_BY_INSTALMENTS';
 
@@ -238,21 +273,14 @@ export async function createTamaraCheckout(opts: {
       phone_number: phone,
       region: opts.billing.region || city,
     },
-    tax_amount: amountObj(opts.order.tax_total ?? 0),
+    tax_amount: amountObj(money(opts.order.tax_total) || vatPortion(total)),
     shipping_amount: amountObj(opts.order.shipping_total ?? 0),
     merchant_url: {
       success: withOrder(successBase),
       failure: withOrder(failureBase),
       cancel: withOrder(cancelBase),
     },
-    risk_assessment: {
-      is_premium_customer: false,
-      is_guest_user: true,
-      account_creation_date: today,
-      total_order_count: 0,
-      date_first_paid: today,
-      date_last_paid: today,
-    },
+    risk_assessment: await riskAssessment(opts.order, phone),
   };
 
   const discount = money(opts.order.discount_total);
@@ -392,7 +420,10 @@ async function findOrderForTamara(opts: {
   return null;
 }
 
-async function markTamaraPaid(order: OrderRow & { status: string; payment_status: string }, raw: unknown) {
+async function markTamaraPaid(
+  order: OrderRow & { status: string; payment_status: string },
+  raw: unknown,
+) {
   let shouldNotifyWhatsApp = false;
   if (order.payment_status !== 'paid') {
     const nextStatus = order.status === 'pending_payment' ? 'pending' : order.status;
@@ -424,7 +455,6 @@ async function markTamaraPaid(order: OrderRow & { status: string; payment_status
   );
 
   if (shouldNotifyWhatsApp) {
-    const { maybeNotifyOrderWhatsApp } = await import('./whatsapp');
     await maybeNotifyOrderWhatsApp(order.id);
   }
 
@@ -482,7 +512,9 @@ export async function applyTamaraWebhook(input: {
         // Auto-authorise may already move status; still try to sync as paid if authorised/captured
         const details = await getTamaraOrder(String(tamaraOrderId));
         const status = String(details?.status || '').toLowerCase();
-        if (!['authorised', 'authorized', 'fully_captured', 'partially_captured'].includes(status)) {
+        if (
+          !['authorised', 'authorized', 'fully_captured', 'partially_captured'].includes(status)
+        ) {
           await pool.query(
             `UPDATE payments
              SET raw_payload = COALESCE(raw_payload, '{}'::jsonb) || $2::jsonb,
@@ -504,6 +536,22 @@ export async function applyTamaraWebhook(input: {
     event === 'order_cancelled'
   ) {
     return markTamaraFailed(order, input.raw);
+  }
+
+  if (event === 'order_refunded') {
+    await pool.query(
+      `UPDATE payments
+       SET raw_payload = COALESCE(raw_payload, '{}'::jsonb) || $2::jsonb,
+           updated_at = NOW()
+       WHERE order_id = $1`,
+      [order.id, JSON.stringify({ refunded_webhook: input.raw })],
+    );
+    await pool.query(
+      `INSERT INTO order_status_history (order_id, from_status, to_status, note)
+       VALUES ($1, $2, $2, 'Tamara refund confirmed by webhook')`,
+      [order.id, order.status],
+    );
+    return { ...order, paid: order.payment_status === 'paid' };
   }
 
   if (event === 'order_captured') {
@@ -567,19 +615,24 @@ export async function syncTamaraReturn(orderNumber: string) {
 }
 
 /** Capture after shipment for Tamara-paid orders (no-op if not Tamara / already captured). */
-export async function maybeCaptureTamaraOnShip(orderId: number, note?: string | null) {
+export async function maybeCaptureTamaraOnShip(
+  orderId: number,
+  note?: string | null,
+): Promise<{ attempted: boolean; ok: boolean; error?: string }> {
   const pay = await pool.query(
     `SELECT * FROM payments WHERE order_id = $1 AND provider = 'tamara' ORDER BY id DESC LIMIT 1`,
     [orderId],
   );
-  if (!pay.rowCount) return;
-  if (pay.rows[0].raw_payload?.captured_at) return;
+  if (!pay.rowCount) return { attempted: false, ok: true };
+  if (pay.rows[0].raw_payload?.captured_at) return { attempted: false, ok: true };
 
   const orderRes = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]);
-  if (!orderRes.rowCount || orderRes.rows[0].payment_status !== 'paid') return;
+  if (!orderRes.rowCount || orderRes.rows[0].payment_status !== 'paid') {
+    return { attempted: false, ok: true };
+  }
 
   const tamaraOrderId = pay.rows[0].provider_ref || pay.rows[0].raw_payload?.tamara_order_id;
-  if (!tamaraOrderId) return;
+  if (!tamaraOrderId) return { attempted: false, ok: true };
 
   const result = await captureTamaraOrder({
     tamaraOrderId: String(tamaraOrderId),
@@ -602,5 +655,75 @@ export async function maybeCaptureTamaraOnShip(orderId: number, note?: string | 
         }),
       ],
     );
+    return { attempted: true, ok: true };
+  }
+  return {
+    attempted: true,
+    ok: false,
+    error: `Tamara capture failed: ${JSON.stringify(result.json ?? {}).slice(0, 200)}`,
+  };
+}
+
+/** Tamara order id stored for a local order, if any. */
+export async function tamaraOrderIdFor(orderId: number): Promise<string | null> {
+  const pay = await pool.query(
+    `SELECT provider_ref, raw_payload FROM payments
+     WHERE order_id = $1 AND provider = 'tamara' ORDER BY id DESC LIMIT 1`,
+    [orderId],
+  );
+  const row = pay.rows[0];
+  const id = row?.provider_ref || row?.raw_payload?.tamara_order_id;
+  return id ? String(id) : null;
+}
+
+/** Cancel (fully or partially) an authorised, not yet captured Tamara order. */
+export async function cancelTamaraOrder(opts: { tamaraOrderId: string; amount: string | number }) {
+  const { response, json } = await tamaraFetch(`/orders/${opts.tamaraOrderId}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({
+      total_amount: amountObj(opts.amount),
+      shipping_amount: amountObj(0),
+      tax_amount: amountObj(0),
+      discount_amount: amountObj(0),
+    }),
+  });
+  if (!response.ok) {
+    logger.warn({ status: response.status, body: json, ...opts }, 'Tamara cancel failed');
+    return { ok: false as const, json };
+  }
+  return { ok: true as const, json };
+}
+
+/**
+ * Pre-checkout eligibility. Fails open (eligible) on timeout/error, as Tamara recommends,
+ * so a slow API never hides the payment option.
+ */
+export async function checkTamaraEligibility(opts: {
+  phone?: string | null;
+  amount: number;
+  timeoutMs?: number;
+}): Promise<boolean> {
+  if (!tamaraConfigured()) return false;
+  const local = normalizeTamaraPhone(opts.phone || '');
+  if (!local) return true;
+  try {
+    const response = await fetch(`${apiBase()}/pre-checkout/v1/eligibility`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.TAMARA_API_TOKEN}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        order: { amount: money(opts.amount), currency: config.TAMARA_CURRENCY || 'SAR' },
+        customer: { phone_number: `966${local}` },
+      }),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 1500),
+    });
+    if (!response.ok) return true;
+    const json = (await response.json().catch(() => null)) as { is_eligible?: boolean } | null;
+    return json?.is_eligible !== false;
+  } catch {
+    return true;
   }
 }

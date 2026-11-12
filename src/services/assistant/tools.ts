@@ -1,6 +1,7 @@
 import pool from '../../db/pool';
 import { effectiveProductPrice, toMoney, addMoney } from '../../shared/money';
 import { checkBuildCompatibility } from '../../modules/compatibility/engine';
+import { config } from '../../utils';
 
 export type AssistantProductCard = {
   id: number;
@@ -43,7 +44,8 @@ export const assistantToolDefinitions = [
     type: 'function' as const,
     function: {
       name: 'search_products',
-      description: 'Search store products by text/category/budget. Excludes PC builder component parts.',
+      description:
+        'Search store products by text/category/budget. Excludes PC builder component parts.',
       parameters: {
         type: 'object',
         properties: {
@@ -330,8 +332,15 @@ export async function runAssistantTool(
 
       // GPU early for gaming so budget is reserved for it.
       const ordered = [
-        ...requiredSlots.filter((s: any) => s.component_type === 'cpu' || s.component_type === 'motherboard' || s.component_type === 'gpu'),
-        ...requiredSlots.filter((s: any) => !['cpu', 'motherboard', 'gpu'].includes(s.component_type)),
+        ...requiredSlots.filter(
+          (s: any) =>
+            s.component_type === 'cpu' ||
+            s.component_type === 'motherboard' ||
+            s.component_type === 'gpu',
+        ),
+        ...requiredSlots.filter(
+          (s: any) => !['cpu', 'motherboard', 'gpu'].includes(s.component_type),
+        ),
         ...optionalSlots,
       ];
       for (let idx = 0; idx < ordered.length; idx++) {
@@ -413,7 +422,9 @@ export async function runAssistantTool(
             (p) =>
               String(p.specs?.socket || '').toLowerCase() === String(socket || '').toLowerCase() &&
               Number(effectiveProductPrice(p)) <=
-                Number(effectiveProductPrice(mb.product)) + remaining + Number(effectiveProductPrice(mb.product)),
+                Number(effectiveProductPrice(mb.product)) +
+                  remaining +
+                  Number(effectiveProductPrice(mb.product)),
           );
           if (altMb) {
             remaining += Number(effectiveProductPrice(mb.product));
@@ -492,7 +503,7 @@ export async function runAssistantTool(
       return {
         result: {
           store_name: settings.store_name ?? 'Arkan',
-          currency: settings.currency ?? 'EGP',
+          currency: settings.currency ?? config.STORE_CURRENCY,
           shipping_policy: settings.shipping_policy ?? null,
           warranty_policy: settings.warranty_policy ?? null,
         },

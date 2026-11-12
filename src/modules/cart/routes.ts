@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import crypto from 'node:crypto';
 import pool from '../../db/pool';
-import { asyncWrapper, HttpError } from '../../utils';
+import { asyncWrapper, config, HttpError } from '../../utils';
 import { authMiddleware, optionalAuth } from '../../middleware/authentication';
 import { validate } from '../../middleware/validateReq';
 import { ok } from '../../shared/response';
@@ -25,10 +25,9 @@ async function getOrCreateCart(userId?: number, guestToken?: string) {
   if (userId) {
     const existing = await pool.query('SELECT * FROM carts WHERE user_id = $1', [userId]);
     if (existing.rowCount) return existing.rows[0];
-    const created = await pool.query(
-      'INSERT INTO carts (user_id) VALUES ($1) RETURNING *',
-      [userId],
-    );
+    const created = await pool.query('INSERT INTO carts (user_id) VALUES ($1) RETURNING *', [
+      userId,
+    ]);
     return created.rows[0];
   }
 
@@ -75,9 +74,7 @@ async function cartSummary(cartId: number) {
       });
     } else {
       const unit =
-        line.variant_price != null
-          ? toMoney(line.variant_price)
-          : effectiveProductPrice(line);
+        line.variant_price != null ? toMoney(line.variant_price) : effectiveProductPrice(line);
       const lineTotal = mulMoney(unit, line.quantity);
       subtotal = addMoney(subtotal, lineTotal);
       items.push({ ...line, unit_price: unit, line_total: lineTotal });
@@ -110,9 +107,7 @@ async function cartSummary(cartId: number) {
     if (method.rowCount) {
       const m = method.rows[0];
       shipping =
-        m.free_above && Number(subtotal) >= Number(m.free_above)
-          ? '0.00'
-          : toMoney(m.base_rate);
+        m.free_above && Number(subtotal) >= Number(m.free_above) ? '0.00' : toMoney(m.base_rate);
     }
   }
 
@@ -125,7 +120,7 @@ async function cartSummary(cartId: number) {
   return {
     cart: cart.rows[0],
     items,
-    pricing: { subtotal, discount, tax, shipping, total, currency: 'EGP' },
+    pricing: { subtotal, discount, tax, shipping, total, currency: config.STORE_CURRENCY },
   };
 }
 
@@ -169,10 +164,10 @@ router.post(
         [cart.id, build_id],
       );
       if (existingBuild.rowCount) {
-        await pool.query(
-          'UPDATE cart_lines SET quantity = $1, updated_at = NOW() WHERE id = $2',
-          [quantity, existingBuild.rows[0].id],
-        );
+        await pool.query('UPDATE cart_lines SET quantity = $1, updated_at = NOW() WHERE id = $2', [
+          quantity,
+          existingBuild.rows[0].id,
+        ]);
       } else {
         await pool.query(
           `INSERT INTO cart_lines (cart_id, build_id, quantity)
@@ -186,8 +181,7 @@ router.post(
         [product_id],
       );
       if (!product.rowCount) throw new HttpError(400, 'Product not available');
-      const available =
-        Number(product.rows[0].stock) - Number(product.rows[0].reserved_stock || 0);
+      const available = Number(product.rows[0].stock) - Number(product.rows[0].reserved_stock || 0);
       if (product.rows[0].track_inventory && available < quantity) {
         throw new HttpError(400, 'Insufficient stock');
       }
@@ -234,10 +228,7 @@ router.delete(
   '/items/:id',
   optionalAuth(),
   asyncWrapper(async (req, res) => {
-    const cart = await getOrCreateCart(
-      req.user?.id,
-      req.query.guest_token as string | undefined,
-    );
+    const cart = await getOrCreateCart(req.user?.id, req.query.guest_token as string | undefined);
     await pool.query('DELETE FROM cart_lines WHERE id = $1 AND cart_id = $2', [
       req.params.id,
       cart.id,
@@ -270,10 +261,7 @@ router.delete(
   '/coupon',
   optionalAuth(),
   asyncWrapper(async (req, res) => {
-    const cart = await getOrCreateCart(
-      req.user?.id,
-      req.query.guest_token as string | undefined,
-    );
+    const cart = await getOrCreateCart(req.user?.id, req.query.guest_token as string | undefined);
     await pool.query('UPDATE carts SET coupon_code = NULL WHERE id = $1', [cart.id]);
     ok(res, await cartSummary(cart.id));
   }),
@@ -291,15 +279,14 @@ router.post(
       if (!guest.rowCount) return;
       let userCart = await client.query('SELECT * FROM carts WHERE user_id = $1', [req.user!.id]);
       if (!userCart.rowCount) {
-        userCart = await client.query(
-          'INSERT INTO carts (user_id) VALUES ($1) RETURNING *',
-          [req.user!.id],
-        );
+        userCart = await client.query('INSERT INTO carts (user_id) VALUES ($1) RETURNING *', [
+          req.user!.id,
+        ]);
       }
-      await client.query(
-        `UPDATE cart_lines SET cart_id = $1 WHERE cart_id = $2`,
-        [userCart.rows[0].id, guest.rows[0].id],
-      );
+      await client.query(`UPDATE cart_lines SET cart_id = $1 WHERE cart_id = $2`, [
+        userCart.rows[0].id,
+        guest.rows[0].id,
+      ]);
       await client.query('DELETE FROM carts WHERE id = $1', [guest.rows[0].id]);
     });
     const cart = await getOrCreateCart(req.user!.id);

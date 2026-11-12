@@ -2,14 +2,14 @@ import express, { Request } from 'express';
 import { config, loggerMiddleware, UPLOADS_ROOT } from './utils';
 import { errorHandlerMiddleware } from './middleware/errorHandler';
 import cors, { CorsOptionsDelegate } from 'cors';
+import helmet from 'helmet';
 import { router } from './routes';
 
 const allowedOrigins = config.CORS_ORIGIN.split(',').map((origin) => origin.trim());
 
 const corsOptionsDelegate: CorsOptionsDelegate<Request> = (req, callback) => {
   const requestOrigin = req.header('Origin') || '';
-  const allow =
-    allowedOrigins.includes('*') || allowedOrigins.includes(requestOrigin);
+  const allow = allowedOrigins.includes('*') || allowedOrigins.includes(requestOrigin);
   callback(null, {
     origin: allow,
     credentials: true,
@@ -17,6 +17,17 @@ const corsOptionsDelegate: CorsOptionsDelegate<Request> = (req, callback) => {
 };
 
 export const app = express();
+
+// Behind nginx: trust the first proxy so req.ip / req.protocol reflect the real client.
+app.set('trust proxy', 1);
+
+app.use(
+  helmet({
+    // API only — images under /uploads are embedded by the storefront on another origin.
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    contentSecurityPolicy: false,
+  }),
+);
 
 app.use(
   express.json({

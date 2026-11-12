@@ -114,7 +114,7 @@ router.post(
         await sendWhatsAppReply({
           sessionId,
           to: from,
-          body: `لم نجد الطلب #${classified.orderId}. تأكد من رقم الطلب.`,
+          body: 'لم نجد هذا الطلب. تأكد من رقم الطلب من فضلك.',
         });
       }
       return res.status(200).json({ ok: true, message: 'order not found' });
@@ -129,8 +129,8 @@ router.post(
           to: from,
           body:
             order.status === 'cancelled'
-              ? `الطلب #${order.id} ملغي مسبقاً.`
-              : `الطلب #${order.id} تمت معالجته مسبقاً (الحالة: ${order.status}).`,
+              ? `الطلب ${order.order_number} ملغي مسبقاً.`
+              : `الطلب ${order.order_number} تمت معالجته مسبقاً.`,
           orderId: order.id,
         });
       }
@@ -165,7 +165,7 @@ router.post(
         to: from,
         body:
           result.message === 'awaiting_payment'
-            ? `طلبك #${order.id} لسه مستني الدفع الإلكتروني. بعد الدفع هنتابع التأكيد.`
+            ? `طلبك ${order.order_number} ما زال بانتظار الدفع الإلكتروني، وسنتابع التأكيد بعد إتمام الدفع.`
             : classified.replyToUser,
         orderId: order.id,
       });

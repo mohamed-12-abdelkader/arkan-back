@@ -16,8 +16,7 @@ export interface ClassifyResult {
   replyToUser: string;
 }
 
-const FALLBACK_UNCLEAR =
-  'عذراً، لم نفهم رسالتك. للتأكيد أرسل «نعم» مع رقم الطلب، أو «لا» للإلغاء.';
+const FALLBACK_UNCLEAR = 'عذراً، لم نفهم رسالتك. للتأكيد أرسل «نعم» مع رقم الطلب، أو «لا» للإلغاء.';
 
 /**
  * Classify a WhatsApp reply about order confirmation using DeepSeek.
@@ -67,7 +66,8 @@ async function callDeepSeek(
     '- If user says no/cancel vaguely, reject that matched order (or the only open one).',
     '- If multiple open orders and user does not specify which, intent=which_order and ask them to pick a number.',
     '- If user names an order id, use that order_id.',
-    '- reply_to_user must be ONE short Arabic sentence only (ack confirm/cancel). No follow-up questions.',
+    '- reply_to_user must be ONE short sentence in polite Saudi/Gulf-friendly Modern Standard Arabic (ack confirm/cancel). No follow-up questions. No Egyptian dialect.',
+    '- When mentioning an order to the user, use its number= value (e.g. ARK-20261112-123456), never the internal #id.',
   ].join(' ');
 
   const user = [
@@ -93,7 +93,9 @@ async function callDeepSeek(
     }),
   });
 
-  const data = await res.json().catch(() => null);
+  const data = (await res.json().catch(() => null)) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  } | null;
   if (!res.ok) {
     throw new Error(`DeepSeek HTTP ${res.status}`);
   }
@@ -110,7 +112,7 @@ async function callDeepSeek(
   const orderId =
     typeof parsed.order_id === 'number'
       ? parsed.order_id
-      : matchedOrderId ?? (openOrders.length === 1 ? openOrders[0].id : null);
+      : (matchedOrderId ?? (openOrders.length === 1 ? openOrders[0].id : null));
 
   return {
     intent,
@@ -188,23 +190,28 @@ function normalizeIntent(raw?: string): ConfirmIntent {
   }
 }
 
+function orderLabel(orderId: number, openOrders: OpenOrderContext[]) {
+  const match = openOrders.find((o) => o.id === orderId);
+  return match?.order_number || `#${orderId}`;
+}
+
 function defaultReply(
   intent: ConfirmIntent,
   orderId: number | null,
   openOrders: OpenOrderContext[],
 ): string {
   if (intent === 'confirm' && orderId) {
-    return `تم تأكيد طلبك رقم #${orderId}. هنبدأ تجهيزه دلوقتي.`;
+    return `تم تأكيد طلبك رقم ${orderLabel(orderId, openOrders)}، وسنبدأ تجهيزه الآن. شكراً لتسوقك من أركان.`;
   }
   if (intent === 'reject' && orderId) {
-    return `تم إلغاء طلبك رقم #${orderId}.`;
+    return `تم إلغاء طلبك رقم ${orderLabel(orderId, openOrders)}.`;
   }
   if (intent === 'which_order') {
-    const list = openOrders.map((o) => `#${o.id}`).join(' و ');
-    return `لديك أكثر من طلب بانتظار التأكيد (${list}). أي رقم طلب تقصد؟`;
+    const list = openOrders.map((o) => o.order_number || `#${o.id}`).join(' و ');
+    return `لديك أكثر من طلب بانتظار التأكيد (${list}). أي طلب تقصد؟`;
   }
   if (orderId) {
-    return `للتأكيد على الطلب #${orderId} أرسل «نعم»، وللإلغاء أرسل «لا».`;
+    return `للتأكيد على الطلب ${orderLabel(orderId, openOrders)} أرسل «نعم»، وللإلغاء أرسل «لا».`;
   }
   return FALLBACK_UNCLEAR;
 }

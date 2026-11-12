@@ -1,20 +1,23 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import pool from '../../db/pool';
-import { asyncWrapper, HttpError, config } from '../../utils';
+import { asyncWrapper, HttpError, config, publicApiBase } from '../../utils';
 import { optionalAuth } from '../../middleware/authentication';
 import { validate } from '../../middleware/validateReq';
-import { created } from '../../shared/response';
+import { created, ok } from '../../shared/response';
 import {
   applyPaymobResult,
   createPaymobCheckout,
+  findOrderByPaymobReference,
   paymobConfigured,
   verifyPaymobHmac,
 } from '../../services/paymob';
 import {
   applyTamaraWebhook,
+  checkTamaraEligibility,
   createTamaraCheckout,
   syncTamaraReturn,
+  tamaraAmountAllowed,
   tamaraConfigured,
   verifyTamaraWebhookToken,
 } from '../../services/tamara';
@@ -28,8 +31,7 @@ function frontendBase(reqOrigin?: string | null) {
 }
 
 function apiBase(req: { protocol: string; get(name: string): string | undefined }) {
-  const host = req.get('host');
-  return `${req.protocol}://${host}`;
+  return publicApiBase(req);
 }
 
 function truthy(value: unknown) {
@@ -48,6 +50,52 @@ async function loadUnpaidOrder(orderNumber: string, phone?: string) {
   }
   return order;
 }
+
+/** Which payment methods the storefront may offer (no secrets). */
+router.get(
+  '/methods',
+  asyncWrapper(async (_req, res) => {
+    ok(res, {
+      currency: config.STORE_CURRENCY,
+      cod: true,
+      paymob: paymobConfigured(),
+      tamara: {
+        enabled: tamaraConfigured(),
+        min_amount: config.TAMARA_MIN_AMOUNT || null,
+        max_amount: config.TAMARA_MAX_AMOUNT || null,
+        public_key: config.TAMARA_PUBLIC_KEY || null,
+        country: config.TAMARA_COUNTRY_CODE,
+        locale: config.TAMARA_LOCALE,
+      },
+    });
+  }),
+);
+
+/** Tamara pre-checkout eligibility + amount range check for the checkout page. */
+router.post(
+  '/tamara/eligibility',
+  validate(
+    z.object({
+      phone: z.string().min(8).optional(),
+      amount: z.coerce.number().positive(),
+    }),
+  ),
+  asyncWrapper(async (req, res) => {
+    if (!tamaraConfigured()) {
+      ok(res, { is_eligible: false, reason: 'not_configured' });
+      return;
+    }
+    if (!tamaraAmountAllowed(req.body.amount)) {
+      ok(res, { is_eligible: false, reason: 'amount_out_of_range' });
+      return;
+    }
+    const eligible = await checkTamaraEligibility({
+      phone: req.body.phone,
+      amount: req.body.amount,
+    });
+    ok(res, { is_eligible: eligible, reason: eligible ? null : 'customer_not_eligible' });
+  }),
+);
 
 router.post(
   '/paymob/session',
@@ -220,9 +268,7 @@ router.post(
   '/tamara/webhook',
   asyncWrapper(async (req, res) => {
     const authHeader = String(req.get('authorization') || '');
-    const bearer = authHeader.toLowerCase().startsWith('bearer ')
-      ? authHeader.slice(7).trim()
-      : '';
+    const bearer = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
     const token = String(req.query.tamaraToken || bearer || '');
     if (!verifyTamaraWebhookToken(token)) {
       res.status(401).json({ message: 'Invalid Tamara token' });
@@ -233,8 +279,7 @@ router.post(
     await applyTamaraWebhook({
       eventType: body.event_type != null ? String(body.event_type) : null,
       orderId: body.order_id != null ? String(body.order_id) : null,
-      orderReferenceId:
-        body.order_reference_id != null ? String(body.order_reference_id) : null,
+      orderReferenceId: body.order_reference_id != null ? String(body.order_reference_id) : null,
       orderNumber: body.order_number != null ? String(body.order_number) : null,
       raw: body,
     });
@@ -261,14 +306,11 @@ router.get(
     }
 
     let next = frontendBase(null);
-    if (merchantOrderId) {
+    const order = await findOrderByPaymobReference(merchantOrderId);
+    if (order) {
       const pay = await pool.query(
-        `SELECT p.raw_payload
-         FROM payments p
-         JOIN orders o ON o.id = p.order_id
-         WHERE o.order_number = $1
-         ORDER BY p.id DESC LIMIT 1`,
-        [merchantOrderId],
+        `SELECT raw_payload FROM payments WHERE order_id = $1 ORDER BY id DESC LIMIT 1`,
+        [order.id],
       );
       const stored = pay.rows[0]?.raw_payload?.frontend_return;
       if (typeof stored === 'string' && stored.startsWith('http')) next = stored;
@@ -277,7 +319,8 @@ router.get(
     const success = verified && truthy(q.success) && !truthy(q.pending);
     const url = new URL('/checkout/result', next);
     url.searchParams.set('success', success ? '1' : '0');
-    if (merchantOrderId) url.searchParams.set('order_number', merchantOrderId);
+    if (order?.order_number) url.searchParams.set('order_number', order.order_number);
+    url.searchParams.set('provider', 'paymob');
     if (!verified) url.searchParams.set('pending', '1');
     res.redirect(url.toString());
   }),

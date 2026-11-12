@@ -1,7 +1,10 @@
 import tls from 'node:tls';
 import { applyMigrations } from './db/migrate';
 
-if (typeof tls.getCACertificates === 'function' && typeof tls.setDefaultCACertificates === 'function') {
+if (
+  typeof tls.getCACertificates === 'function' &&
+  typeof tls.setDefaultCACertificates === 'function'
+) {
   tls.setDefaultCACertificates([
     ...new Set([...tls.getCACertificates('default'), ...tls.getCACertificates('system')]),
   ]);
@@ -22,7 +25,7 @@ const startServer = async () => {
       );
     }
 
-    const PORT = 8000;
+    const PORT = config.PORT;
 
     const server = app.listen(PORT, () => {
       logger.info(`🚀 Server is running on port ${PORT}`);
@@ -40,7 +43,7 @@ const startServer = async () => {
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
   } catch (error) {
-    logger.error('❌ Failed to start server:', error);
+    logger.error({ err: error }, '❌ Failed to start server');
     process.exit(1);
   }
 };

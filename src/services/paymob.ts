@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import pool from '../db/pool';
 import { config, HttpError, logger } from '../utils';
+import { maybeNotifyOrderWhatsApp } from './whatsapp';
 
 type Billing = {
   full_name?: string;
@@ -97,6 +98,17 @@ function specialReference(orderId: number) {
   return `order-${orderId}-${Date.now()}-${random}`;
 }
 
+/** Paymob KSA expects an international phone number, e.g. +9665XXXXXXXX. */
+export function toPaymobPhone(raw: string | null | undefined): string {
+  let digits = String(raw || '').replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (!digits) return '';
+  if (digits.startsWith('966')) return `+${digits}`;
+  if (digits.startsWith('05') && digits.length === 10) return `+966${digits.slice(1)}`;
+  if (digits.startsWith('5') && digits.length === 9) return `+966${digits}`;
+  return `+${digits}`;
+}
+
 function splitName(fullName: string) {
   const parts = fullName.trim().split(/\s+/).filter(Boolean);
   return {
@@ -127,15 +139,12 @@ export async function createPaymobCheckout(opts: {
   const integration = integrationId();
   const reference = specialReference(opts.order.id);
   const { first_name, last_name } = splitName(opts.billing.full_name || 'Customer');
-  const phone = (opts.billing.phone || opts.order.phone || '').trim();
-  const email =
-    opts.billing.email ||
-    opts.order.guest_email ||
-    `guest-${opts.order.id}@arkan.shop`;
+  const phone = toPaymobPhone(opts.billing.phone || opts.order.phone);
+  if (!phone) throw new HttpError(400, 'رقم الجوال مطلوب للدفع الإلكتروني');
+  const email = opts.billing.email || opts.order.guest_email || `guest-${opts.order.id}@arkan.shop`;
   const apiBase = config.PAYMOB_BASE_URL.replace(/\/$/, '');
   const redirection =
-    config.PAYMOB_REDIRECTION_URL ||
-    `${opts.frontendReturn.replace(/\/$/, '')}/checkout/result`;
+    config.PAYMOB_REDIRECTION_URL || `${opts.frontendReturn.replace(/\/$/, '')}/checkout/result`;
 
   const payload = {
     amount: amountCents,
@@ -155,8 +164,8 @@ export async function createPaymobCheckout(opts: {
       last_name: last_name || first_name,
       street: opts.billing.address_line1 || 'N/A',
       building: 'N/A',
-      phone_number: phone || '01000000000',
-      city: 'N/A',
+      phone_number: phone,
+      city: opts.billing.city || 'N/A',
       country: config.PAYMOB_COUNTRY || 'SA',
       email,
       floor: 'N/A',
@@ -191,7 +200,7 @@ export async function createPaymobCheckout(opts: {
       (typeof json?.message === 'string' && json.message) ||
       (json ? JSON.stringify(json).slice(0, 280) : 'تعذر بدء الدفع مع Paymob');
     if (/integration id does not exist/i.test(detail)) {
-      detail = `Paymob لا يعرف رقم التكامل ${config.PAYMOB_INTEGRATION_ID}. المفتاح الحالي تجريبي، والأرقام 15289 و15290 تكاملات Live. من لوحة Paymob افتح وضع Test ثم انسخ رقم التكامل من Developers → Payment Integrations وضعه في PAYMOB_INTEGRATION_ID.`;
+      detail = `Paymob لا يعرف رقم التكامل ${config.PAYMOB_INTEGRATION_ID} لهذه المفاتيح. تأكد أن المفاتيح ورقم التكامل من نفس الوضع (Test أو Live).`;
     }
     throw new HttpError(502, detail);
   }
@@ -232,17 +241,14 @@ export async function createPaymobCheckout(opts: {
   };
 }
 
-export async function applyPaymobResult(input: {
-  merchantOrderId?: string | null;
-  success: boolean;
-  pending: boolean;
-  transactionId?: string | null;
-  raw: unknown;
-}) {
-  const reference = input.merchantOrderId?.trim();
-  if (!reference) return null;
-
-  const orderIdMatch = /^order-(\d+)-/.exec(reference);
+/**
+ * Resolve an order from the Paymob merchant reference (`order-<id>-<ts>-<rand>`),
+ * a stored special_reference, or a plain order number.
+ */
+export async function findOrderByPaymobReference(reference: string | null | undefined) {
+  const ref = reference?.trim();
+  if (!ref) return null;
+  const orderIdMatch = /^order-(\d+)-/.exec(ref);
   const orderRes = orderIdMatch
     ? await pool.query('SELECT * FROM orders WHERE id = $1', [Number(orderIdMatch[1])])
     : await pool.query(
@@ -250,10 +256,20 @@ export async function applyPaymobResult(input: {
          LEFT JOIN payments p ON p.order_id = o.id
          WHERE o.order_number = $1 OR p.raw_payload->>'special_reference' = $1
          ORDER BY o.id DESC LIMIT 1`,
-        [reference],
+        [ref],
       );
-  if (!orderRes.rowCount) return null;
-  const order = orderRes.rows[0];
+  return orderRes.rowCount ? orderRes.rows[0] : null;
+}
+
+export async function applyPaymobResult(input: {
+  merchantOrderId?: string | null;
+  success: boolean;
+  pending: boolean;
+  transactionId?: string | null;
+  raw: unknown;
+}) {
+  const order = await findOrderByPaymobReference(input.merchantOrderId);
+  if (!order) return null;
 
   if (input.success && !input.pending) {
     let shouldNotifyWhatsApp = false;
@@ -286,7 +302,6 @@ export async function applyPaymobResult(input: {
       [order.id, input.transactionId ?? null, JSON.stringify({ callback: input.raw })],
     );
     if (shouldNotifyWhatsApp) {
-      const { maybeNotifyOrderWhatsApp } = await import('./whatsapp');
       await maybeNotifyOrderWhatsApp(order.id);
     }
     return { ...order, payment_status: 'paid', paid: true };

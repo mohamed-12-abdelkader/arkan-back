@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import pool from '../../db/pool';
-import { asyncWrapper, config, HttpError } from '../../utils';
+import { asyncWrapper, config, HttpError, publicApiBase } from '../../utils';
 import { authMiddleware, optionalAuth, requirePermission } from '../../middleware/authentication';
 import { validate } from '../../middleware/validateReq';
 import { created, ok, paginated } from '../../shared/response';
@@ -12,9 +12,15 @@ import { writeAudit } from '../../services/audit';
 import { cartSummary, getOrCreateCart } from '../cart/routes';
 import { checkBuildCompatibility } from '../compatibility/engine';
 import { validateCouponForAmount } from '../../services/coupons';
-import { createPaymobCheckout } from '../../services/paymob';
-import { createTamaraCheckout, maybeCaptureTamaraOnShip } from '../../services/tamara';
+import { createPaymobCheckout, paymobConfigured } from '../../services/paymob';
+import {
+  createTamaraCheckout,
+  maybeCaptureTamaraOnShip,
+  tamaraAmountAllowed,
+  tamaraConfigured,
+} from '../../services/tamara';
 import { maybeNotifyOrderWhatsApp } from '../../services/whatsapp';
+import { onOrderCancelled, PaymentSideEffectResult } from '../../services/paymentSideEffects';
 
 export const router = Router();
 
@@ -137,7 +143,11 @@ function frontendBase(origin?: string | null) {
 }
 
 async function respondOrder(
-  req: { protocol: string; get(name: string): string | undefined; user?: { email?: string | null } },
+  req: {
+    protocol: string;
+    get(name: string): string | undefined;
+    user?: { email?: string | null };
+  },
   res: Parameters<typeof created>[0],
   order: {
     id: number;
@@ -183,7 +193,7 @@ async function respondOrder(
     order,
     billing,
     frontendReturn: frontendBase(req.get('origin')),
-    apiPublicBase: `${req.protocol}://${req.get('host')}`,
+    apiPublicBase: publicApiBase(req),
   };
 
   try {
@@ -248,11 +258,11 @@ router.post(
         'إعدادات Paymob غير مكتملة. يرجى التحقق من PAYMOB_SECRET_KEY و PAYMOB_INTEGRATION_ID في ملف .env',
       );
     }
-    if (isTamara(body.payment_method) && !config.TAMARA_API_TOKEN.trim()) {
-      throw new HttpError(
-        500,
-        'إعدادات تمارا غير مكتملة. أضف TAMARA_API_TOKEN في ملف .env',
-      );
+    if (isTamara(body.payment_method) && !tamaraConfigured()) {
+      throw new HttpError(400, 'الدفع عبر تمارا غير متاح حالياً. اختر طريقة دفع أخرى.');
+    }
+    if (isPaymob(body.payment_method) && !paymobConfigured()) {
+      throw new HttpError(400, 'الدفع بالبطاقة غير متاح حالياً. اختر طريقة دفع أخرى.');
     }
     // Guest checkout allowed with phone + shipping_address (email optional)
 
@@ -288,10 +298,9 @@ router.post(
             }
           }
         } else {
-          const p = await client.query(
-            `SELECT * FROM products WHERE id = $1 FOR UPDATE`,
-            [item.product_id],
-          );
+          const p = await client.query(`SELECT * FROM products WHERE id = $1 FOR UPDATE`, [
+            item.product_id,
+          ]);
           if (!p.rowCount || p.rows[0].status !== 'active' || !p.rows[0].is_active) {
             throw new HttpError(400, `Product unavailable: ${item.product_id}`);
           }
@@ -325,6 +334,9 @@ router.post(
         ),
       };
 
+      if (isTamara(body.payment_method) && !tamaraAmountAllowed(Number(pricing.total))) {
+        throw new HttpError(400, 'قيمة الطلب خارج الحدود المسموحة للدفع عبر تمارا.');
+      }
       const onum = orderNumber();
       // glassShop-style: start Pending; move to awaiting_confirmation only after WA send succeeds
       const initialStatus = isOnlinePayment(body.payment_method) ? 'pending_payment' : 'pending';
@@ -336,7 +348,7 @@ router.post(
           customer_notes, coupon_code, guest_email
         ) VALUES (
           $1,$2,$3,$4,'unfulfilled',
-          $5,$6,$7,$8,$9,'EGP',
+          $5,$6,$7,$8,$9,'${config.STORE_CURRENCY}',
           $10,$11,$12,$13,$14,$15,$16
         ) RETURNING *`,
         [
@@ -445,7 +457,7 @@ router.post(
 
       await client.query(
         `INSERT INTO payments (order_id, provider, method, amount, currency, status, idempotency_key)
-         VALUES ($1,$2,$3,$4,'EGP','pending',$5)`,
+         VALUES ($1,$2,$3,$4,'${config.STORE_CURRENCY}','pending',$5)`,
         [
           orderRow.id,
           paymentMethodLabel(body.payment_method),
@@ -478,10 +490,9 @@ router.post(
           cart.coupon_code,
         ]);
         if (coupon.rowCount) {
-          await client.query(
-            'UPDATE coupons SET used_count = used_count + 1 WHERE id = $1',
-            [coupon.rows[0].id],
-          );
+          await client.query('UPDATE coupons SET used_count = used_count + 1 WHERE id = $1', [
+            coupon.rows[0].id,
+          ]);
           await client.query(
             `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id) VALUES ($1,$2,$3)`,
             [coupon.rows[0].id, req.user?.id ?? null, orderRow.id],
@@ -517,10 +528,9 @@ router.get(
   authMiddleware(),
   asyncWrapper(async (req, res) => {
     const query = PaginationQuery.parse(req.query);
-    const count = await pool.query(
-      'SELECT COUNT(*)::int AS total FROM orders WHERE user_id = $1',
-      [req.user!.id],
-    );
+    const count = await pool.query('SELECT COUNT(*)::int AS total FROM orders WHERE user_id = $1', [
+      req.user!.id,
+    ]);
     const result = await pool.query(
       `SELECT * FROM orders WHERE user_id = $1
        ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
@@ -596,11 +606,11 @@ router.post(
         'إعدادات Paymob غير مكتملة. يرجى التحقق من PAYMOB_SECRET_KEY و PAYMOB_INTEGRATION_ID في ملف .env',
       );
     }
-    if (isTamara(body.payment_method) && !config.TAMARA_API_TOKEN.trim()) {
-      throw new HttpError(
-        500,
-        'إعدادات تمارا غير مكتملة. أضف TAMARA_API_TOKEN في ملف .env',
-      );
+    if (isTamara(body.payment_method) && !tamaraConfigured()) {
+      throw new HttpError(400, 'الدفع عبر تمارا غير متاح حالياً. اختر طريقة دفع أخرى.');
+    }
+    if (isPaymob(body.payment_method) && !paymobConfigured()) {
+      throw new HttpError(400, 'الدفع بالبطاقة غير متاح حالياً. اختر طريقة دفع أخرى.');
     }
     const qty = body.quantity || 1;
 
@@ -616,7 +626,7 @@ router.post(
       let unitPrice = effectiveProductPrice(product);
       let productName = product.name;
       let sku = product.sku ?? null;
-      let variantId: number | null = body.variant_id ?? null;
+      const variantId: number | null = body.variant_id ?? null;
 
       if (variantId) {
         const vRes = await client.query(
@@ -630,8 +640,7 @@ router.post(
         if (variant.price != null) unitPrice = toMoney(variant.price);
         productName = variant.name ? `${product.name} — ${variant.name}` : product.name;
         sku = variant.sku ?? sku;
-        const vAvailable =
-          Number(variant.stock) - Number(variant.reserved_stock || 0);
+        const vAvailable = Number(variant.stock) - Number(variant.reserved_stock || 0);
         if (vAvailable < qty) {
           throw new HttpError(400, `Insufficient stock for variant ${variantId}`);
         }
@@ -660,6 +669,9 @@ router.post(
       const taxable = Math.max(0, Number(subtotal) - Number(discount));
       const total = addMoney(toMoney(taxable), tax, shipping);
 
+      if (isTamara(body.payment_method) && !tamaraAmountAllowed(Number(total))) {
+        throw new HttpError(400, 'قيمة الطلب خارج الحدود المسموحة للدفع عبر تمارا.');
+      }
       const onum = orderNumber();
       const initialStatus = isOnlinePayment(body.payment_method) ? 'pending_payment' : 'pending';
       const createdOrder = await client.query(
@@ -670,7 +682,7 @@ router.post(
           customer_notes, coupon_code, guest_email
         ) VALUES (
           $1,$2,$3,$4,'unfulfilled',
-          $5,$6,$7,$8,$9,'EGP',
+          $5,$6,$7,$8,$9,'${config.STORE_CURRENCY}',
           $10,$11,$12,$13,$14,$15,$16
         ) RETURNING *`,
         [
@@ -744,7 +756,7 @@ router.post(
 
       await client.query(
         `INSERT INTO payments (order_id, provider, method, amount, currency, status, idempotency_key)
-         VALUES ($1,$2,$3,$4,'EGP','pending',$5)`,
+         VALUES ($1,$2,$3,$4,'${config.STORE_CURRENCY}','pending',$5)`,
         [
           orderRow.id,
           paymentMethodLabel(body.payment_method),
@@ -978,10 +990,7 @@ router.patch(
     const nextStatus = req.body.status as string;
     const allowed = ALLOWED_TRANSITIONS[order.status] || [];
     if (!allowed.includes(nextStatus)) {
-      throw new HttpError(
-        400,
-        `لا يمكن تغيير الحالة من ${order.status} إلى ${nextStatus}`,
-      );
+      throw new HttpError(400, `لا يمكن تغيير الحالة من ${order.status} إلى ${nextStatus}`);
     }
 
     const side = statusSideEffects(nextStatus);
@@ -1022,13 +1031,33 @@ router.patch(
       after: { status: updated.status },
     });
 
+    let paymentResult: PaymentSideEffectResult | null = null;
     if (nextStatus === 'shipped') {
-      await maybeCaptureTamaraOnShip(order.id, req.body.note ?? null).catch(() => undefined);
+      const capture = await maybeCaptureTamaraOnShip(order.id, req.body.note ?? null).catch(
+        (err) => ({ attempted: true, ok: false, error: String(err?.message || err) }),
+      );
+      if (!capture.ok) {
+        await pool.query(
+          `INSERT INTO order_status_history (order_id, from_status, to_status, note)
+           VALUES ($1, $2, $2, $3)`,
+          [order.id, nextStatus, capture.error || 'Tamara capture failed'],
+        );
+        paymentResult = {
+          ok: false,
+          warning: `فشل تأكيد الشحن (Capture) في تمارا: ${capture.error || ''}`.trim(),
+        };
+      }
+    } else if (nextStatus === 'cancelled') {
+      paymentResult = await onOrderCancelled(order.id, req.body.note || 'Cancelled by store');
     }
 
+    const fresh = await pool.query('SELECT * FROM orders WHERE id = $1', [order.id]);
+    const current = fresh.rows[0] ?? updated;
     ok(res, {
-      ...updated,
-      allowed_next_statuses: ALLOWED_TRANSITIONS[updated.status] || [],
+      ...current,
+      allowed_next_statuses: ALLOWED_TRANSITIONS[current.status] || [],
+      payment_action: paymentResult?.action ?? null,
+      payment_warning: paymentResult?.warning ?? null,
     });
   }),
 );

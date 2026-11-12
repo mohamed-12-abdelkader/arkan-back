@@ -46,10 +46,9 @@ async function waFetch(path: string, init: RequestInit = {}) {
 }
 
 export async function getOrderConfirmSessionId(): Promise<string | null> {
-  const row = await pool.query(
-    `SELECT value FROM store_settings WHERE key = $1 LIMIT 1`,
-    [ORDER_CONFIRM_SESSION_KEY],
-  );
+  const row = await pool.query(`SELECT value FROM store_settings WHERE key = $1 LIMIT 1`, [
+    ORDER_CONFIRM_SESSION_KEY,
+  ]);
   if (!row.rowCount) return null;
   const value = row.rows[0].value;
   if (typeof value === 'string') return value || null;
@@ -151,13 +150,17 @@ export async function sendMessage(params: {
   });
 }
 
-export type SendConfirmResult =
-  | { ok: true; sessionId: string }
-  | { ok: false; reason: string };
+export type SendConfirmResult = { ok: true; sessionId: string } | { ok: false; reason: string };
 
 function formatMoney(amount: string | number): string {
   const n = Number(amount || 0);
-  return `${n.toLocaleString('ar-EG', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} جنيه`;
+  const formatted = n.toLocaleString('ar-SA', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+  return config.STORE_CURRENCY === 'SAR'
+    ? `${formatted} ر.س`
+    : `${formatted} ${config.STORE_CURRENCY}`;
 }
 
 function paymentMethodLabel(method: string | null | undefined): string {
@@ -178,7 +181,12 @@ function buildOrderConfirmBody(order: {
   phone?: string | null;
   shipping_address?: string | null;
   shipping_address_json?: any;
-  items: Array<{ product_name: string; quantity: number; price: string | number; line_total?: string | number }>;
+  items: Array<{
+    product_name: string;
+    quantity: number;
+    price: string | number;
+    line_total?: string | number;
+  }>;
   payment_method?: string | null;
 }): string {
   const lines = order.items.map((d) => {
@@ -186,10 +194,7 @@ function buildOrderConfirmBody(order: {
     return `• ${d.product_name} × ${d.quantity} — ${formatMoney(lineTotal)}`;
   });
 
-  const address =
-    order.shipping_address_json?.address_line1 ||
-    order.shipping_address ||
-    '—';
+  const address = order.shipping_address_json?.address_line1 || order.shipping_address || '—';
   const city = order.shipping_address_json?.city || order.shipping_address_json?.governorate;
 
   const parts = [
@@ -362,12 +367,11 @@ export function verifyWebhookSignature(
   signatureHeader: string | undefined,
 ): boolean {
   const secret = config.WHATSAPP_WEBHOOK_SECRET;
-  if (!secret) return true;
+  // Unsigned webhooks are only tolerated outside production.
+  if (!secret) return config.NODE_ENV !== 'production';
   if (!rawBody || !signatureHeader) return false;
 
-  const expected =
-    'sha256=' +
-    crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+  const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
 
   try {
     const a = Buffer.from(signatureHeader);

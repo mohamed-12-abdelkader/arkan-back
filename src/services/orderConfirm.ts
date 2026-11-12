@@ -1,6 +1,7 @@
 import pool from '../db/pool';
 import { logger } from '../utils';
 import { normalizePhone } from './whatsapp';
+import { onOrderCancelled } from './paymentSideEffects';
 
 const ACTIONABLE = new Set(['pending', 'awaiting_confirmation', 'pending_payment']);
 
@@ -43,9 +44,7 @@ export async function confirmOrder(
       order.id,
       order.status,
       nextStatus,
-      source === 'whatsapp'
-        ? 'Customer confirmed via WhatsApp'
-        : 'Order confirmed by admin',
+      source === 'whatsapp' ? 'Customer confirmed via WhatsApp' : 'Order confirmed by admin',
     ],
   );
 
@@ -83,10 +82,7 @@ export async function cancelOrder(
          cancelled_reason = COALESCE(cancelled_reason, $2),
          updated_at = NOW()
      WHERE id = $1`,
-    [
-      order.id,
-      source === 'whatsapp' ? 'Cancelled by customer via WhatsApp' : 'Cancelled',
-    ],
+    [order.id, source === 'whatsapp' ? 'Cancelled by customer via WhatsApp' : 'Cancelled'],
   );
   await pool.query(
     `INSERT INTO order_status_history (order_id, from_status, to_status, note)
@@ -94,14 +90,14 @@ export async function cancelOrder(
     [
       order.id,
       order.status,
-      source === 'whatsapp'
-        ? 'Customer cancelled via WhatsApp'
-        : `Cancelled (${source})`,
+      source === 'whatsapp' ? 'Customer cancelled via WhatsApp' : `Cancelled (${source})`,
     ],
   );
 
   logger.info({ orderId: order.id, source }, '[orderConfirm] cancelled');
-  return { ok: true, status: 'cancelled' };
+  // Release/refund online payments (Tamara cancel; Paymob flagged for manual refund)
+  const payment = await onOrderCancelled(order.id, `Cancelled (${source})`);
+  return { ok: true, status: 'cancelled', message: payment.warning };
 }
 
 export async function listOpenOrdersForPhone(phoneDigits: string) {

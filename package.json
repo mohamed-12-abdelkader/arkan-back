@@ -12,7 +12,8 @@
     "test": "vitest",
     "migrate": "node-pg-migrate",
     "seed:builder": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs scripts/seed-builder.ts",
-    "seed:brands": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs scripts/seed-arkan-brands.ts"
+    "seed:brands": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs scripts/seed-arkan-brands.ts",
+    "seed:sample": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs scripts/seed-sample-data.ts"
   },
   "dependencies": {
     "@types/cors": "^2.8.19",
@@ -22,6 +23,7 @@
     "dotenv": "^16.5.0",
     "envalid": "^8.0.0",
     "express": "^4.19.2",
+    "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.1",
     "node-pg-migrate": "^7.9.1",

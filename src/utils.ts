@@ -60,6 +60,13 @@ export class HttpError extends Error {
 // Config
 export const config = cleanEnv(process.env, {
   NODE_ENV: str({ devDefault: testOnly('test'), choices: ['development', 'production', 'test'] }),
+  PORT: port({ default: 8000 }),
+  // Public HTTPS origin of this API (used for payment callback/return URLs behind a proxy)
+  API_PUBLIC_URL: str({ default: '' }),
+  STORE_CURRENCY: str({
+    default: 'SAR',
+    choices: ['SAR', 'AED', 'KWD', 'BHD', 'OMR', 'QAR', 'EGP', 'USD'],
+  }),
   CORS_ORIGIN: str(),
   FRONTEND_HOST: str(),
   SECRET_KEY: str({ devDefault: testOnly(crypto.randomBytes(32).toString('hex')) }),
@@ -122,7 +129,18 @@ export const config = cleanEnv(process.env, {
   TAMARA_SUCCESS_URL: str({ default: '' }),
   TAMARA_FAILURE_URL: str({ default: '' }),
   TAMARA_CANCEL_URL: str({ default: '' }),
+  // Order total range (SAR) in which Tamara is offered; 0 = no limit
+  TAMARA_MIN_AMOUNT: num({ default: 0 }),
+  TAMARA_MAX_AMOUNT: num({ default: 0 }),
+  // VAT rate included in prices (e.g. 0.15). 0 when the store is not VAT-registered.
+  TAMARA_VAT_RATE: num({ default: 0 }),
 });
+
+/** Public base URL of this API, preferring the configured HTTPS origin over the request host. */
+export function publicApiBase(req: { protocol: string; get(name: string): string | undefined }) {
+  if (config.API_PUBLIC_URL) return config.API_PUBLIC_URL.replace(/\/$/, '');
+  return `${req.protocol}://${req.get('host')}`;
+}
 
 // Security
 export async function generateToken(user: User, pool: Pool): Promise<string> {
@@ -136,10 +154,10 @@ export async function issueTokenPair(
   deviceInfo?: string,
 ): Promise<{ accessToken: string; refreshToken: string; jti: string }> {
   const jti = crypto.randomUUID();
-  await db.query('UPDATE users SET jti = $1, last_login_at = NOW(), failed_login_attempts = 0 WHERE id = $2', [
-    jti,
-    user.id,
-  ]);
+  await db.query(
+    'UPDATE users SET jti = $1, last_login_at = NOW(), failed_login_attempts = 0 WHERE id = $2',
+    [jti, user.id],
+  );
 
   const accessToken = jwt.sign(
     { id: user.id, email: user.email, role: user.role, jti, typ: 'access' },
@@ -149,9 +167,7 @@ export async function issueTokenPair(
 
   const refreshToken = crypto.randomBytes(48).toString('hex');
   const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-  const expiresAt = new Date(
-    Date.now() + config.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60 * 1000,
-  );
+  const expiresAt = new Date(Date.now() + config.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60 * 1000);
 
   await db.query(
     `INSERT INTO refresh_tokens (user_id, token_hash, device_info, expires_at)
