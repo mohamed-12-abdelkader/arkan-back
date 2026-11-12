@@ -200,7 +200,8 @@ export async function sendEmail(to: string, subject: string, html: string) {
 }
 
 // Upload
-const uploadsRoot = path.join(__dirname, '../../uploads');
+// utils.ts lives in src/ (dev) or dist/ (prod) — uploads/ sits at the project root
+const uploadsRoot = path.join(__dirname, '../uploads');
 
 function makeDiskStorage(subdir: string) {
   return multer.diskStorage({
