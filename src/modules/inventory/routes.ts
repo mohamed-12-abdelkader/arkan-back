@@ -99,7 +99,8 @@ router.post(
           [quantity_delta, variant_id, product_id],
         );
         if (!v.rowCount) throw new HttpError(404, 'Variant not found');
-        if (Number(v.rows[0].stock) < 0) throw new HttpError(400, 'Variant stock cannot be negative');
+        if (Number(v.rows[0].stock) < 0)
+          throw new HttpError(400, 'Variant stock cannot be negative');
       }
 
       await client.query(

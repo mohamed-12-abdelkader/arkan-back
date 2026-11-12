@@ -63,8 +63,7 @@ router.put(
          JOIN roles r ON r.id = ur.role_id
          WHERE r.slug = 'super_admin'`,
       );
-      const onlyThis =
-        current.rowCount === 1 && Number(current.rows[0].user_id) === userId;
+      const onlyThis = current.rowCount === 1 && Number(current.rows[0].user_id) === userId;
       if (onlyThis) {
         throw new HttpError(400, 'Cannot remove the last Super Admin');
       }
@@ -72,10 +71,11 @@ router.put(
 
     await pool.query('DELETE FROM user_roles WHERE user_id = $1', [userId]);
     for (const role of roles.rows) {
-      await pool.query(
-        'INSERT INTO user_roles (user_id, role_id, assigned_by) VALUES ($1,$2,$3)',
-        [userId, role.id, req.user!.id],
-      );
+      await pool.query('INSERT INTO user_roles (user_id, role_id, assigned_by) VALUES ($1,$2,$3)', [
+        userId,
+        role.id,
+        req.user!.id,
+      ]);
     }
 
     await pool.query('UPDATE users SET is_staff = TRUE, role = $1 WHERE id = $2', [

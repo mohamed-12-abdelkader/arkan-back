@@ -117,10 +117,9 @@ router.post(
       throw new HttpError(400, 'نسبة الخصم لا تتجاوز 100%');
     }
 
-    const existing = await pool.query(
-      `SELECT id FROM coupons WHERE UPPER(code) = UPPER($1)`,
-      [b.code],
-    );
+    const existing = await pool.query(`SELECT id FROM coupons WHERE UPPER(code) = UPPER($1)`, [
+      b.code,
+    ]);
     if (existing.rowCount) throw new HttpError(409, 'كود الخصم موجود مسبقاً');
 
     const result = await pool.query(

@@ -60,9 +60,7 @@ router.post(
 
     const tokens = await issueTokenPair(user, pool, req.headers['user-agent'] as string);
     const permissions =
-      user.role === 'admin' || user.is_staff
-        ? [...(await getUserPermissionCodes(user.id))]
-        : [];
+      user.role === 'admin' || user.is_staff ? [...(await getUserPermissionCodes(user.id))] : [];
 
     await writeAudit({
       actorId: user.id,

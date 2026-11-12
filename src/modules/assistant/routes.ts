@@ -114,13 +114,7 @@ router.post(
   validate(
     z.object({
       conversation_id: z.string().uuid().optional().nullable(),
-      event_type: z.enum([
-        'product_click',
-        'build_open',
-        'quick_reply',
-        'chat_open',
-        'new_chat',
-      ]),
+      event_type: z.enum(['product_click', 'build_open', 'quick_reply', 'chat_open', 'new_chat']),
       meta: z.record(z.any()).optional(),
     }),
   ),

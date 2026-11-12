@@ -1,12 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import pool from '../../db/pool';
-import {
-  asyncWrapper,
-  HttpError,
-  publicUploadPath,
-  uploadBrandLogo,
-} from '../../utils';
+import { asyncWrapper, HttpError, publicUploadPath, uploadBrandLogo } from '../../utils';
 import { authMiddleware, requirePermission } from '../../middleware/authentication';
 import { validate } from '../../middleware/validateReq';
 import { created, ok, paginated } from '../../shared/response';
@@ -92,10 +87,7 @@ router.get(
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const count = await pool.query(
-      `SELECT COUNT(*)::int AS total FROM brands ${whereSql}`,
-      values,
-    );
+    const count = await pool.query(`SELECT COUNT(*)::int AS total FROM brands ${whereSql}`, values);
     values.push(query.limit, getOffset(query.page, query.limit));
     const result = await pool.query(
       `SELECT * FROM brands ${whereSql} ORDER BY name ASC LIMIT $${i++} OFFSET $${i}`,
@@ -187,11 +179,7 @@ router.get(
     }).parse(req.query);
 
     const values: unknown[] = [brandRow.id];
-    const where = [
-      `p.brand_id = $1`,
-      `p.status = 'active'`,
-      `p.is_active = TRUE`,
-    ];
+    const where = [`p.brand_id = $1`, `p.status = 'active'`, `p.is_active = TRUE`];
     let i = 2;
 
     if (query.category_id) {

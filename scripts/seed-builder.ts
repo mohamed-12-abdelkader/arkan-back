@@ -47,7 +47,14 @@ const parts: Part[] = [
     price: 6999,
     stock: 8,
     description: 'لوحة AM5 تدعم DDR5',
-    specs: { socket: 'AM5', form_factor: 'ATX', ram_type: 'DDR5', ram_slots: 4, max_ram_gb: 128, m2_slots: 2 },
+    specs: {
+      socket: 'AM5',
+      form_factor: 'ATX',
+      ram_type: 'DDR5',
+      ram_slots: 4,
+      max_ram_gb: 128,
+      m2_slots: 2,
+    },
   },
   {
     sku: 'BLD-MB-B760',
@@ -56,7 +63,14 @@ const parts: Part[] = [
     price: 6499,
     stock: 8,
     description: 'لوحة LGA1700 تدعم DDR5',
-    specs: { socket: 'LGA1700', form_factor: 'ATX', ram_type: 'DDR5', ram_slots: 4, max_ram_gb: 128, m2_slots: 2 },
+    specs: {
+      socket: 'LGA1700',
+      form_factor: 'ATX',
+      ram_type: 'DDR5',
+      ram_slots: 4,
+      max_ram_gb: 128,
+      m2_slots: 2,
+    },
   },
   {
     sku: 'BLD-GPU-4060',
@@ -101,7 +115,11 @@ const parts: Part[] = [
     price: 2499,
     stock: 11,
     description: 'يستوعب لوحات ATX وكارت حتى 380 مم',
-    specs: { motherboard_form_factors: 'ATX,mATX', max_gpu_length_mm: 380, max_cooler_height_mm: 170 },
+    specs: {
+      motherboard_form_factors: 'ATX,mATX',
+      max_gpu_length_mm: 380,
+      max_cooler_height_mm: 170,
+    },
   },
   {
     sku: 'BLD-CASE-GLASS',
@@ -110,7 +128,11 @@ const parts: Part[] = [
     price: 3299,
     stock: 8,
     description: 'كيس ATX بواجهة زجاجية',
-    specs: { motherboard_form_factors: 'ATX,mATX', max_gpu_length_mm: 360, max_cooler_height_mm: 165 },
+    specs: {
+      motherboard_form_factors: 'ATX,mATX',
+      max_gpu_length_mm: 360,
+      max_cooler_height_mm: 165,
+    },
   },
   {
     sku: 'BLD-RAM-32',
@@ -119,7 +141,13 @@ const parts: Part[] = [
     price: 4599,
     stock: 14,
     description: 'قطعتان 16GB',
-    specs: { capacity_gb: 32, ddr_generation: 'DDR5', speed_mhz: 6000, modules: 2, form_factor: 'DIMM' },
+    specs: {
+      capacity_gb: 32,
+      ddr_generation: 'DDR5',
+      speed_mhz: 6000,
+      modules: 2,
+      form_factor: 'DIMM',
+    },
   },
   {
     sku: 'BLD-RAM-16',
@@ -128,7 +156,13 @@ const parts: Part[] = [
     price: 2499,
     stock: 18,
     description: 'قطعتان 8GB',
-    specs: { capacity_gb: 16, ddr_generation: 'DDR5', speed_mhz: 5600, modules: 2, form_factor: 'DIMM' },
+    specs: {
+      capacity_gb: 16,
+      ddr_generation: 'DDR5',
+      speed_mhz: 5600,
+      modules: 2,
+      form_factor: 'DIMM',
+    },
   },
   {
     sku: 'BLD-SSD-1TB',

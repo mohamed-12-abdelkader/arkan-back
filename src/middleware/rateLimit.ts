@@ -36,9 +36,7 @@ export function rateLimit(options: {
       res.setHeader('Retry-After', String(retryAfterSec));
       return res.status(429).json({
         success: false,
-        message:
-          options.message ||
-          'Too many requests. Please try again later.',
+        message: options.message || 'Too many requests. Please try again later.',
         retry_after: retryAfterSec,
       });
     }

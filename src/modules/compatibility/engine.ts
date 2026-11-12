@@ -29,7 +29,12 @@ function compare(op: string, left: unknown, right: unknown): boolean | null {
     case 'contains': {
       const hay = String(left).toLowerCase();
       const needle = String(right).toLowerCase();
-      return hay.split(/[,|/]/).map((s) => s.trim()).includes(needle) || hay.includes(needle);
+      return (
+        hay
+          .split(/[,|/]/)
+          .map((s) => s.trim())
+          .includes(needle) || hay.includes(needle)
+      );
     }
     case 'lte':
       return Number(left) <= Number(right);

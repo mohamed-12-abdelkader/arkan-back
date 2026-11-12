@@ -130,8 +130,7 @@ router.put(
         order_confirm_session_id: z.string().min(1).nullable().optional(),
       })
       .refine(
-        (b) =>
-          b.orderConfirmSessionId !== undefined || b.order_confirm_session_id !== undefined,
+        (b) => b.orderConfirmSessionId !== undefined || b.order_confirm_session_id !== undefined,
         { message: 'orderConfirmSessionId is required' },
       ),
   ),

@@ -24,10 +24,7 @@ export async function countCategoryProducts(categoryId: number) {
 export async function assertLeafCategoryForProduct(categoryId: number | null | undefined) {
   if (categoryId == null) return;
 
-  const category = await pool.query(
-    `SELECT id, name FROM categories WHERE id = $1`,
-    [categoryId],
-  );
+  const category = await pool.query(`SELECT id, name FROM categories WHERE id = $1`, [categoryId]);
   if (!category.rowCount) {
     throw new HttpError(400, 'التصنيف غير موجود');
   }

@@ -3,9 +3,7 @@ import { z } from 'zod';
 /** Customer signup: name + phone + password (email optional) */
 export const RegisterUser = z.object({
   name: z.string().min(1),
-  phone: z
-    .string()
-    .regex(/^\+?[0-9]{8,15}$/, 'Invalid phone number'),
+  phone: z.string().regex(/^\+?[0-9]{8,15}$/, 'Invalid phone number'),
   password: z.string().min(6),
   email: z.string().email().optional(),
 });

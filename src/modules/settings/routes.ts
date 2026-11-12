@@ -9,13 +9,7 @@ import { writeAudit } from '../../services/audit';
 
 export const router = Router();
 
-const PUBLIC_KEYS = new Set([
-  'currency',
-  'timezone',
-  'store_name',
-  'tax_rate',
-  'assistant_config',
-]);
+const PUBLIC_KEYS = new Set(['currency', 'timezone', 'store_name', 'tax_rate', 'assistant_config']);
 
 router.get(
   '/public',
@@ -35,7 +29,9 @@ router.get(
   authMiddleware(['admin']),
   requirePermission('settings.manage'),
   asyncWrapper(async (_req, res) => {
-    const result = await pool.query('SELECT key, value, updated_at FROM store_settings ORDER BY key');
+    const result = await pool.query(
+      'SELECT key, value, updated_at FROM store_settings ORDER BY key',
+    );
     const settings: Record<string, unknown> = {};
     for (const row of result.rows) settings[row.key] = row.value;
     ok(res, settings);

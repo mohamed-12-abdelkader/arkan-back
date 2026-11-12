@@ -2,7 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import tls from 'node:tls';
 
-if (typeof tls.getCACertificates === 'function' && typeof tls.setDefaultCACertificates === 'function') {
+if (
+  typeof tls.getCACertificates === 'function' &&
+  typeof tls.setDefaultCACertificates === 'function'
+) {
   tls.setDefaultCACertificates([
     ...new Set([...tls.getCACertificates('default'), ...tls.getCACertificates('system')]),
   ]);
@@ -92,10 +95,7 @@ async function main() {
     `DELETE FROM brands WHERE slug <> ALL($1::text[]) RETURNING id, name, slug`,
     [keepSlugs],
   );
-  console.log(
-    'removed:',
-    removed.rows.map((r) => r.slug).join(', ') || '(none)',
-  );
+  console.log('removed:', removed.rows.map((r) => r.slug).join(', ') || '(none)');
 
   for (const brand of BRANDS) {
     const logo = await downloadLogo(brand.logoUrl, brand.slug);
@@ -118,9 +118,7 @@ async function main() {
     }
   }
 
-  const list = await pool.query(
-    `SELECT id, name, slug, logo, is_active FROM brands ORDER BY name`,
-  );
+  const list = await pool.query(`SELECT id, name, slug, logo, is_active FROM brands ORDER BY name`);
   console.log('brands now:');
   for (const row of list.rows) {
     console.log(`- ${row.name} (${row.slug}) ${row.logo}`);
