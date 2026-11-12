@@ -1,4 +1,4 @@
-﻿-- Up Migration
+-- Up Migration
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS assistant_conversations (
