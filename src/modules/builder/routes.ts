@@ -66,9 +66,7 @@ async function recalculateBuild(buildId: number) {
   let subtotal = '0.00';
   for (const item of items.rows) {
     const unit =
-      item.variant_price != null
-        ? toMoney(item.variant_price)
-        : effectiveProductPrice(item);
+      item.variant_price != null ? toMoney(item.variant_price) : effectiveProductPrice(item);
     const line = mulMoney(unit, item.quantity);
     await pool.query('UPDATE pc_build_items SET unit_price = $1 WHERE id = $2', [unit, item.id]);
     subtotal = addMoney(subtotal, line);
@@ -106,9 +104,7 @@ router.get(
     const templates = await pool.query(
       'SELECT * FROM build_templates WHERE is_active = TRUE ORDER BY display_order',
     );
-    const slots = await pool.query(
-      'SELECT * FROM build_slots ORDER BY display_order',
-    );
+    const slots = await pool.query('SELECT * FROM build_slots ORDER BY display_order');
     ok(
       res,
       templates.rows.map((t) => ({
@@ -163,7 +159,9 @@ router.get(
       template: template.rows[0],
       slots: slots.rows.map((slot) => ({
         ...slot,
-        options: options.filter((option) => option.component_type === slot.component_type),
+        options: options.filter(
+          (option) => (option as Record<string, unknown>).component_type === slot.component_type,
+        ),
       })),
     });
   }),
@@ -181,7 +179,10 @@ router.get(
        WHERE component_type IS NOT NULL AND status <> 'archived'
        ORDER BY component_type, name`,
     );
-    ok(res, result.rows.map((row) => mapComponent(row)));
+    ok(
+      res,
+      result.rows.map((row) => mapComponent(row)),
+    );
   }),
 );
 

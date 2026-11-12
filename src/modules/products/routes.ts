@@ -1,17 +1,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import pool from '../../db/pool';
-import {
-  asyncWrapper,
-  HttpError,
-  publicUploadPath,
-  uploadProductImages,
-} from '../../utils';
+import { asyncWrapper, HttpError, publicUploadPath, uploadProductImages } from '../../utils';
 import { authMiddleware, requirePermission } from '../../middleware/authentication';
 import { validate } from '../../middleware/validateReq';
 import { created, ok, paginated } from '../../shared/response';
 import { getOffset, PaginationQuery } from '../../shared/pagination';
-import { slugify, uniqueSlug } from '../../shared/slug';
+import { uniqueSlug } from '../../shared/slug';
 import { effectiveProductPrice, toMoney } from '../../shared/money';
 import { writeAudit } from '../../services/audit';
 import { withTransaction } from '../../shared/db';
@@ -202,11 +197,7 @@ router.get(
 
     const values: unknown[] = [];
     // Exclude PC builder parts (cpu/gpu/ram/...) — storefront products only
-    const where = [
-      `p.status = 'active'`,
-      `p.is_active = TRUE`,
-      `p.component_type IS NULL`,
-    ];
+    const where = [`p.status = 'active'`, `p.is_active = TRUE`, `p.component_type IS NULL`];
     let i = 1;
 
     if (query.in_stock === 'true') {
@@ -221,9 +212,7 @@ router.get(
 
     // Stable-ish shuffle per seed so pagination doesn't reshuffle mid-scroll.
     // Without seed: fresh random order on every request.
-    const orderSql = query.seed
-      ? `ORDER BY md5(p.id::text || $${i++})`
-      : `ORDER BY random()`;
+    const orderSql = query.seed ? `ORDER BY md5(p.id::text || $${i++})` : `ORDER BY random()`;
     if (query.seed) values.push(query.seed);
 
     values.push(query.limit, getOffset(query.page, query.limit));
@@ -508,12 +497,14 @@ router.put(
           );
         }
         if (!sets.some((s) => s.startsWith('image ='))) {
-          await client.query(
-            'UPDATE products SET image = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
-            [imageUrls[0], id],
-          ).then((r) => {
-            row = r.rows[0];
-          });
+          await client
+            .query('UPDATE products SET image = $1, updated_at = NOW() WHERE id = $2 RETURNING *', [
+              imageUrls[0],
+              id,
+            ])
+            .then((r) => {
+              row = r.rows[0];
+            });
         }
       }
 
@@ -587,8 +578,7 @@ router.delete(
   requirePermission('products.manage'),
   asyncWrapper(async (req, res) => {
     const id = Number(req.params.id);
-    const permanent =
-      req.query.permanent === 'true' || req.query.permanent === '1';
+    const permanent = req.query.permanent === 'true' || req.query.permanent === '1';
 
     const existing = await pool.query('SELECT * FROM products WHERE id = $1', [id]);
     if (!existing.rowCount) throw new HttpError(404, 'Product not found');

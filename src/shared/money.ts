@@ -7,7 +7,7 @@ export function toMoney(value: unknown): string {
 }
 
 export function addMoney(...values: unknown[]): string {
-  const cents = values.reduce((sum, v) => sum + Math.round(Number(v ?? 0) * 100), 0);
+  const cents = values.reduce<number>((sum, v) => sum + Math.round(Number(v ?? 0) * 100), 0);
   return (cents / 100).toFixed(2);
 }
 

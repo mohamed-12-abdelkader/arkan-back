@@ -1,12 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import pool from '../../db/pool';
-import {
-  asyncWrapper,
-  HttpError,
-  publicUploadPath,
-  uploadCategoryImage,
-} from '../../utils';
+import { asyncWrapper, HttpError, publicUploadPath, uploadCategoryImage } from '../../utils';
 import { authMiddleware, requirePermission } from '../../middleware/authentication';
 import { validate } from '../../middleware/validateReq';
 import { created, ok, paginated } from '../../shared/response';
@@ -103,10 +98,9 @@ async function wouldCreateCycle(id: number, parentId: number | null): Promise<bo
     if (current === id) return true;
     if (seen.has(current)) return true;
     seen.add(current);
-    const res = await pool.query<{ parent_id: number | null }>(
-      'SELECT parent_id FROM categories WHERE id = $1',
-      [current],
-    );
+    const res: { rows: Array<{ parent_id: number | null }> } = await pool.query<{
+      parent_id: number | null;
+    }>('SELECT parent_id FROM categories WHERE id = $1', [current]);
     current = res.rows[0]?.parent_id ?? null;
   }
   return false;
@@ -277,7 +271,7 @@ router.get(
     const mapCategory = (cat: any) => {
       const childrenCount = Number(cat.children_count) || 0;
       const isLeaf = childrenCount === 0;
-      const products = isLeaf ? byCategory.get(cat.id) ?? [] : [];
+      const products = isLeaf ? (byCategory.get(cat.id) ?? []) : [];
       return {
         id: cat.id,
         name: cat.name,

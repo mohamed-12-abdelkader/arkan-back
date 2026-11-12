@@ -2,6 +2,7 @@ import pool from '../../db/pool';
 import { HttpError } from '../../utils';
 import type { AssistantConfig } from './chat';
 
+// eslint-disable-next-line no-control-regex -- intentionally strips control characters from user input
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 const REPEAT_CHAR = /(.)\1{40,}/u;
 const INJECTION_PATTERNS = [
@@ -76,10 +77,7 @@ export async function enforceAssistantChatLimits(opts: {
   if (cooldownSec > 0 && lastAt > 0) {
     const waitMs = cooldownSec * 1000 - (Date.now() - lastAt);
     if (waitMs > 0) {
-      throw new HttpError(
-        429,
-        `استنى ${Math.ceil(waitMs / 1000)} ثانية قبل إرسال رسالة جديدة`,
-      );
+      throw new HttpError(429, `استنى ${Math.ceil(waitMs / 1000)} ثانية قبل إرسال رسالة جديدة`);
     }
   }
 
@@ -89,9 +87,7 @@ export async function enforceAssistantChatLimits(opts: {
     : opts.guestToken
       ? `c.guest_token = $1`
       : `c.id = $1`;
-  const identityValue = opts.userId
-    ? opts.userId
-    : opts.guestToken || opts.conversationId;
+  const identityValue = opts.userId ? opts.userId : opts.guestToken || opts.conversationId;
 
   const daily = await pool.query(
     `SELECT COUNT(*)::int AS c
@@ -103,10 +99,7 @@ export async function enforceAssistantChatLimits(opts: {
     [identityValue],
   );
   if (Number(daily.rows[0]?.c || 0) >= maxPerDay) {
-    throw new HttpError(
-      429,
-      `وصلت للحد اليومي لاستخدام المساعد (${maxPerDay} رسالة). حاول بكرة.`,
-    );
+    throw new HttpError(429, `وصلت للحد اليومي لاستخدام المساعد (${maxPerDay} رسالة). حاول بكرة.`);
   }
 
   // Cap how many new conversations a guest/user can open per day
@@ -154,11 +147,7 @@ export async function assertCanCreateConversation(opts: {
   }
 }
 
-export function clientKey(req: {
-  ip?: string;
-  body?: any;
-  user?: { id?: number } | null;
-}) {
+export function clientKey(req: { ip?: string; body?: any; user?: { id?: number } | null }) {
   const userId = req.user?.id;
   const guest = typeof req.body?.guest_token === 'string' ? req.body.guest_token : '';
   if (userId) return `user:${userId}`;

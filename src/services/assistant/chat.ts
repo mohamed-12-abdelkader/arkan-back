@@ -7,11 +7,7 @@ import {
   enforceAssistantChatLimits,
   sanitizeAssistantMessage,
 } from './guards';
-import {
-  assistantToolDefinitions,
-  runAssistantTool,
-  type AssistantProductCard,
-} from './tools';
+import { assistantToolDefinitions, runAssistantTool, type AssistantProductCard } from './tools';
 
 export type AssistantConfig = {
   enabled: boolean;
@@ -102,10 +98,9 @@ async function ensureConversation(opts: {
   cfg: AssistantConfig;
 }) {
   if (opts.conversationId) {
-    const existing = await pool.query(
-      `SELECT * FROM assistant_conversations WHERE id = $1`,
-      [opts.conversationId],
-    );
+    const existing = await pool.query(`SELECT * FROM assistant_conversations WHERE id = $1`, [
+      opts.conversationId,
+    ]);
     if (existing.rowCount) {
       const row = existing.rows[0];
       // Ownership: logged-in user or matching guest token
@@ -196,7 +191,7 @@ async function callDeepSeek(messages: DeepSeekMessage[]) {
     }),
   });
 
-  const json = await res.json().catch(() => null);
+  const json: any = await res.json().catch(() => null);
   if (!res.ok) {
     logger.error({ status: res.status, json }, 'DeepSeek error');
     throw new HttpError(502, 'تعذر الاتصال بمساعد الذكاء حالياً');
